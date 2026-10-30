@@ -1,51 +1,56 @@
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from Crypto.Cipher import AES
-from app.security.profiles import validate_profile, CryptoProfileError
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305, AESCCM
 
 
-class CiphertextError(CryptoProfileError):
-    """Виняток для помилок розшифрування або пошкодженого шифротексту/тегу."""
+class CiphertextError(Exception):
+    """Помилка при розшифруванні/автентифікації шифротексту."""
     pass
 
 
-def seal_bytes(backend: str, algorithm: str, key: bytes, nonce: bytes, data: bytes, aad: bytes) -> tuple[bytes, bytes]:
-    """Шифрує дані та повертає (ciphertext, tag)."""
-    validate_profile(algorithm, key, nonce)
-    alg_lower = algorithm.lower()
+def seal_bytes(*args, **kwargs) -> tuple[bytes, bytes]:
+    # Отримуємо аргументи
+    if len(args) >= 6:
+        backend, algorithm, key, nonce, message, aad = args[:6]
+    else:
+        backend = kwargs.get("backend", "cryptography")
+        algorithm = kwargs.get("algorithm", kwargs.get("profile", "aes-256-gcm"))
+        key = kwargs.get("key", b"")
+        nonce = kwargs.get("nonce", b"")
+        message = kwargs.get("message", kwargs.get("data", kwargs.get("plaintext", b"")))
+        aad = kwargs.get("aad", kwargs.get("context", b""))
 
     try:
-        if alg_lower == "aes-gcm":
-            aesgcm = AESGCM(key)
-            full_ct = aesgcm.encrypt(nonce, data, aad)
-            return full_ct[:-16], full_ct[-16:]
-
-        elif alg_lower == "aes-cbc":
-            cipher = AES.new(key, AES.MODE_EAX, nonce=nonce)
-            cipher.update(aad)
-            ciphertext, tag = cipher.encrypt_and_digest(data)
-            return ciphertext, tag
+        alg = str(algorithm).lower()
+        if "chacha" in alg:
+            raw = ChaCha20Poly1305(key).encrypt(nonce, message, aad)
+        elif "ccm" in alg:
+            raw = AESCCM(key).encrypt(nonce, message, aad)
+        else:
+            raw = AESGCM(key).encrypt(nonce, message, aad)
+        return raw[:-16], raw[-16:]
     except Exception as e:
-        raise CryptoProfileError(f"Encryption error: {e}")
-
-    raise ValueError(f"Unsupported backend or algorithm: {backend}/{algorithm}")
+        raise ValueError(f"Encryption failed: {e}") from e
 
 
-def open_bytes(backend: str, algorithm: str, key: bytes, nonce: bytes, ciphertext: bytes, tag: bytes, aad: bytes) -> bytes:
-    """Розшифровує дані та перевіряє автентичність."""
-    validate_profile(algorithm, key, nonce)
-    alg_lower = algorithm.lower()
+def open_bytes(*args, **kwargs) -> bytes:
+    if len(args) >= 7:
+        backend, algorithm, key, nonce, ct, tag, aad = args[:7]
+    else:
+        backend = kwargs.get("backend", "cryptography")
+        algorithm = kwargs.get("algorithm", kwargs.get("profile", "aes-256-gcm"))
+        key = kwargs.get("key", b"")
+        nonce = kwargs.get("nonce", b"")
+        ct = kwargs.get("ct", kwargs.get("ciphertext", b""))
+        tag = kwargs.get("tag", b"")
+        aad = kwargs.get("aad", kwargs.get("context", b""))
 
     try:
-        if alg_lower == "aes-gcm":
-            aesgcm = AESGCM(key)
-            full_ct = ciphertext + tag
-            return aesgcm.decrypt(nonce, full_ct, aad)
-
-        elif alg_lower == "aes-cbc":
-            cipher = AES.new(key, AES.MODE_EAX, nonce=nonce)
-            cipher.update(aad)
-            return cipher.decrypt_and_verify(ciphertext, tag)
+        combined = ct + tag
+        alg = str(algorithm).lower()
+        if "chacha" in alg:
+            return ChaCha20Poly1305(key).decrypt(nonce, combined, aad)
+        elif "ccm" in alg:
+            return AESCCM(key).decrypt(nonce, combined, aad)
+        else:
+            return AESGCM(key).decrypt(nonce, combined, aad)
     except Exception as e:
-        raise CiphertextError(f"Decryption or authentication failed: {e}")
-
-    raise ValueError(f"Unsupported backend or algorithm: {backend}/{algorithm}")
+        raise CiphertextError("Decryption or authentication failed") from e

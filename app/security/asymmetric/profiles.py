@@ -1,5 +1,5 @@
-"""Фіксований дозволений перелік; клієнт не керує алгоритмами."""
 from dataclasses import dataclass
+from typing import Optional
 
 CONTEXT = b"digital-dean:practice-03:report-v1"
 HYBRID_SIZES = (1024, 65536, 1048576)
@@ -12,7 +12,7 @@ class Profile:
     group: str
     key_profile: str
     sizes: tuple[int, ...]
-    overhead_bytes: int | None
+    overhead_bytes: Optional[int]
 
 
 PROFILES = {

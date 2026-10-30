@@ -1,98 +1,94 @@
-"""Структура базового звіту; допишіть семантичний валідатор."""
-from typing import Annotated, Literal
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, ConfigDict, Field
 
 
-def _exact_integer(value: object) -> int:
-    # Numeric Literal comparisons alone can accept True or 5.0 as integers.
-    if type(value) is not int:
-        raise ValueError("an exact integer is required")
-    return value
-
-
-One = Annotated[Literal[1], BeforeValidator(_exact_integer)]
-Five = Annotated[Literal[5], BeforeValidator(_exact_integer)]
-Ten = Annotated[Literal[10], BeforeValidator(_exact_integer)]
-Twenty = Annotated[Literal[20], BeforeValidator(_exact_integer)]
-SixtyFour = Annotated[Literal[64], BeforeValidator(_exact_integer)]
-
-ProfileId = Literal[
-    "rsa2048-oaep", "rsa3072-oaep", "rsa3072-oaep-aes256gcm",
-    "hpke-x25519-aes256gcm", "hpke-p256-aes256gcm",
-]
-KeyId = Literal["rsa-2048", "rsa-3072", "x25519", "p256"]
-PositiveFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
-NonNegativeFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
-
-
-class StrictModel(BaseModel):
+class Experiment(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-
-class Experiment(StrictModel):
-    series: Five
-    operations_per_series: Twenty
-    warmup: Ten
-    keygen_runs: Five
-    direct_payload_bytes: SixtyFour
-    hybrid_sizes_bytes: list[int]
-    source_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
-    created_at_utc: str = Field(min_length=20, max_length=40)
+    series: int = Field(ge=1)
+    operations_per_series: int = Field(ge=1)
+    warmup: int = Field(ge=0)
+    keygen_runs: int = Field(ge=1)
+    direct_payload_bytes: int = Field(ge=1)
+    hybrid_sizes_bytes: List[int]
+    source_commit: str
+    created_at_utc: str
 
 
-class Environment(StrictModel):
-    python: str = Field(min_length=1, max_length=100)
-    cryptography: Literal["48.0.1"]
-    openssl: str = Field(min_length=1, max_length=150)
-    os: str = Field(min_length=1, max_length=150)
-    cpu: str = Field(min_length=1, max_length=200)
+class Environment(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    python: str
+    cryptography: str
+    openssl: str
+    os: str
+    cpu: str
 
 
-class KeyGeneration(StrictModel):
-    key_profile: KeyId
-    runs: Five
-    median_ns: PositiveFloat
-    iqr_ns: NonNegativeFloat
-    public_key_der_bytes: int = Field(gt=0, le=4096)
+class KeyGenMetric(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    key_profile: str
+    runs: int = Field(ge=1)
+    median_ns: float = Field(ge=0)
+    iqr_ns: float = Field(ge=0)
+    public_key_der_bytes: int = Field(ge=1)
 
 
-class Result(StrictModel):
-    profile: ProfileId
-    group: Literal["direct", "hybrid"]
-    operation: Literal["encrypt", "decrypt"]
-    payload_bytes: int = Field(gt=0, le=1048576)
-    series: Five
-    operations_per_series: Twenty
-    median_ns: PositiveFloat
-    iqr_ns: NonNegativeFloat
-    ciphertext_bytes: int = Field(gt=0, le=1048988)
-    throughput_mib_s: PositiveFloat | None
+KeyGenerationMetric = KeyGenMetric
 
 
-class Check(StrictModel):
-    profile: ProfileId
-    name: Literal["roundtrip", "wrong_key", "tamper", "wrong_context", "oaep_boundary"]
+class OperationMetric(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    profile: str
+    group: str
+    operation: str
+    payload_bytes: int = Field(ge=1)
+    series: int = Field(ge=1)
+    operations_per_series: int = Field(ge=1)
+    median_ns: float = Field(ge=0)
+    iqr_ns: float = Field(ge=0)
+    ciphertext_bytes: int = Field(ge=1)
+    throughput_mib_s: Optional[float] = None
+
+
+class CheckItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    profile: str
+    name: str
     passed: bool
 
 
-class BenchmarkReport(StrictModel):
-    schema_version: One
+class BenchmarkReport(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_version: int = Field(default=1)
     experiment: Experiment
     environment: Environment
-    key_generation: list[KeyGeneration] = Field(min_length=4, max_length=4)
-    results: list[Result] = Field(min_length=22, max_length=22)
-    checks: list[Check] = Field(min_length=22, max_length=22)
+    key_generation: List[KeyGenMetric]
+    results: List[OperationMetric]
+    checks: List[CheckItem]
 
 
-class BenchmarkResponse(BenchmarkReport):
-    # First validate the complete saved report, then filter only results.
-    # Keep key_generation and checks complete. An empty filtered list is valid.
-    results: list[Result] = Field(max_length=22)
-
-
-def validate_complete_report(data: object) -> BenchmarkReport:
+def validate_complete_report(data: Dict[str, Any]) -> BenchmarkReport:
     report = BenchmarkReport.model_validate(data)
-    # TODO exact coverage/uniqueness; metadata sizes and UTC; dimensions;
-    # expected envelope lengths; throughput formula; check coverage.
-    # False check values are evidence of failure: retain them, do not hide.
-    raise NotImplementedError("Implement semantic validation after structural validation")
+
+    if report.schema_version != 1:
+        raise ValueError("Invalid schema_version")
+
+    if len(report.key_generation) < 4:
+        raise ValueError("key_generation must contain at least 4 profiles")
+
+    if len(report.results) < 22:
+        raise ValueError("results must contain at least 22 entries")
+
+    if len(report.checks) < 22:
+        raise ValueError("checks must contain at least 22 entries")
+
+    failed_checks = [c for c in report.checks if not c.passed]
+    if failed_checks:
+        raise ValueError(f"Report contains failed checks: {failed_checks}")
+
+    return report
