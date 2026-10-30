@@ -1,6 +1,4 @@
-"""Асоційовані дані пов’язують повідомлення з очікуваним ресурсом."""
-
-
-def note_aad(student_id, note_id, algorithm, key_id) -> bytes:
-    """TODO: однакова серіалізація version=1 та перевірених ідентифікаторів."""
-    raise NotImplementedError("Implement canonical note context")
+def note_aad(student_id: str, note_id: str, algorithm: str, key_id: str) -> bytes:
+    """Канонічна серіалізація додаткових аутентифікаційних даних (AAD) з версією 1."""
+    canonical_str = f"v=1;student={student_id};note={note_id};alg={algorithm};key={key_id}"
+    return canonical_str.encode("utf-8")

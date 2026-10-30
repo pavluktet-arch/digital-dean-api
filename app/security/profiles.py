@@ -1,15 +1,27 @@
-"""Параметри визначеного навчального профілю, не універсальні межі схем."""
+import base64
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from Crypto.Cipher import AES
 
 KEY_BYTES = {
-    "AES-128-GCM": 16,
-    "AES-256-GCM": 32,
-    "ChaCha20-Poly1305": 32,
+    "aes-gcm": 32,
+    "aes-cbc": 32,
 }
-BACKENDS = ("cryptography", "pycryptodome")
-NONCE_BYTES = 12
-TAG_BYTES = 16
+
+BACKENDS = ("aes-gcm", "aes-cbc")
 
 
-def validate_profile(algorithm: str, key: bytes, nonce: bytes) -> None:
-    """TODO: відхилити невідомий алгоритм і неправильні довжини."""
-    raise NotImplementedError("Implement profile validation")
+class CryptoProfileError(Exception):
+    """Базовий виняток для помилок шифрування."""
+    pass
+
+
+def validate_profile(algorithm: str, key: bytes, nonce: bytes) -> str:
+    """Перевіряє правильність алгоритму, довжини ключа (32 байти) та nonce (12 байтів)."""
+    alg_lower = algorithm.lower()
+    if alg_lower not in KEY_BYTES:
+        raise ValueError(f"Unsupported algorithm: {algorithm}")
+    if len(key) != KEY_BYTES[alg_lower]:
+        raise ValueError(f"Invalid key length: expected {KEY_BYTES[alg_lower]} bytes, got {len(key)}")
+    if len(nonce) != 12:
+        raise ValueError(f"Invalid nonce length: expected 12 bytes, got {len(nonce)}")
+    return alg_lower
