@@ -1,30 +1,22 @@
-from typing import Optional
-from uuid import UUID
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict
+
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        str_strip_whitespace=True,
-    )
+    """Базова модель, яка не приймає невідомих полів."""
 
-class StudentBase(StrictModel):
-    full_name: str = Field(..., min_length=5, max_length=120)
-    email: EmailStr
-    group_code: str = Field(..., pattern=r"^[A-ZА-ЯІЇЄa-zа-яіїє0-9]+-[0-9]{2}$")
-    study_program: str = Field(..., min_length=2, max_length=100)  # Варіант 0
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-class StudentCreate(StudentBase):
+
+class StudentCreate(StrictModel):
+    # TODO: додайте full_name, email і group_code з обмеженнями.
     pass
 
-class StudentRead(StudentBase):
-    id: UUID
+
+class StudentRead(StudentCreate):
+    # TODO: додайте серверний ідентифікатор id.
+    pass
+
 
 class StudentUpdate(StrictModel):
-    full_name: Optional[str] = Field(None, min_length=5, max_length=120)
-    email: Optional[EmailStr] = None
-    group_code: Optional[str] = Field(None, pattern=r"^[A-ZА-ЯІЇЄa-zа-яіїє0-9]+-[0-9]{2}$")
-    study_program: Optional[str] = Field(None, min_length=2, max_length=100)
-
-    def check_has_updates(self) -> bool:
-        return any(value is not None for value in self.model_dump(exclude_unset=True).values())
+    # TODO: оголосіть дозволені необов’язкові поля для часткового оновлення.
+    pass
