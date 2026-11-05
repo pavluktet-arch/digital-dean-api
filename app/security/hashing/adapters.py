@@ -1,22 +1,34 @@
-"""Реалізуйте бібліотечне хешування; не пишіть власних криптопримітивів."""
-from app.security.hashing.profiles import CHUNK_BYTES, PROFILES, make_hasher
+from typing import Callable
+from app.security.hashing.profiles import get_hash_constructor
 
+def prepare_operation(profile_id: str, data: bytes, mode: str = "whole", chunk_size: int = 16384) -> Callable[[], bytes]:
+    constructor = get_hash_constructor(profile_id)
+    if mode == "whole":
+        def op() -> bytes:
+            state = constructor()
+            state.update(data)
+            return state.digest()
+        return op
+    elif mode == "chunked":
+        parts = tuple(data[i:i + chunk_size] for i in range(0, len(data), chunk_size))
+        def op() -> bytes:
+            state = constructor()
+            for part in parts:
+                state.update(part)
+            return state.digest()
+        return op
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
 
-def prepare_operation(algorithm: str, data: bytes, mode: str = "whole"):
-    # TODO validate and prepare immutable chunks OUTSIDE the timed operation.
-    # TODO return a no-argument callable that makes a NEW hasher, updates it,
-    # and returns digest bytes on EVERY call. Never capture a mutable hasher.
-    raise NotImplementedError("Prepare a repeatable full hashing operation")
-
-
-def hash_bytes(algorithm: str, data: bytes, mode: str = "whole") -> bytes:
-    # TODO validate the profile, bytes input and whole/chunked mode.
-    # TODO create a NEW hasher for each call, update, return digest() bytes.
-    # May call prepare_operation(... )(). The benchmark prepares ONCE, not per run.
-    # chunked uses CHUNK_BYTES; do not keep mutable global hash objects.
-    raise NotImplementedError("Implement whole and chunked hashing")
-
+def hash_bytes(profile_id: str, data: bytes, mode: str = "whole") -> bytes:
+    op = prepare_operation(profile_id, data, mode)
+    return op()
 
 def hamming_bits(left: bytes, right: bytes) -> int:
-    # TODO require equal nonzero lengths; count differing bits, not hex digits.
-    raise NotImplementedError("Implement bytewise Hamming distance")
+    if not isinstance(left, bytes) or not isinstance(right, bytes):
+        raise TypeError("Arguments must be bytes")
+    if len(left) != len(right) or len(left) == 0:
+        raise ValueError("Bytes must be non-empty and equal in length")
+    
+    # Використовуємо bin(x ^ y).count("1") замість int.bit_count() для сумісності з Python 3.9
+    return sum(bin(x ^ y).count("1") for x, y in zip(left, right))

@@ -1,83 +1,85 @@
-"""Явні профілі та конструктори. MD5/SHA-1 лише для навчального порівняння."""
 import hashlib
-from dataclasses import dataclass
-from typing import Literal
+from typing import Callable, Any, Literal, Dict, NamedTuple, List
 
-AlgorithmID = Literal[
-    "sha256", "sha512", "sha3-256", "blake2b-256", "blake2s-256", "md5", "sha1"
-]
-Mode = Literal["whole", "chunked"]
 PAYLOAD_SIZES = (64, 1024, 65536, 1048576)
-CHUNK_BYTES = 16384
-SERIES = 5
-WARMUP = 10
-AVALANCHE_TRIALS = 100
-AVALANCHE_BYTES = 1024
+
 CHECK_NAMES = (
-    "known-abc", "known-empty", "unicode-utf8", "determinism",
-    "digest-length", "stream-equivalence",
+    "known-abc",
+    "known-empty",
+    "unicode-utf8",
+    "determinism",
+    "digest-length",
+    "stream-equivalence",
 )
 
+AlgorithmID = Literal["sha256", "sha512", "sha3-256", "blake2b-256", "blake2s-256", "md5", "sha1"]
+Mode = Literal["whole", "chunked"]
 
-@dataclass(frozen=True)
-class Profile:
+class ProfileMetadata(NamedTuple):
+    algorithm: str
     digest_bytes: int
-    legacy: bool = False
+    available: bool = True
+    reason: str = None
 
-
-PROFILES = {
-    "sha256": Profile(32), "sha512": Profile(64), "sha3-256": Profile(32),
-    "blake2b-256": Profile(32), "blake2s-256": Profile(32),
-    "md5": Profile(16, True), "sha1": Profile(20, True),
+PROFILES: Dict[str, ProfileMetadata] = {
+    "sha256": ProfileMetadata("sha256", 32),
+    "sha512": ProfileMetadata("sha512", 64),
+    "sha3-256": ProfileMetadata("sha3-256", 32),
+    "blake2b-256": ProfileMetadata("blake2b-256", 32),
+    "blake2s-256": ProfileMetadata("blake2s-256", 32),
+    "md5": ProfileMetadata("md5", 16),
+    "sha1": ProfileMetadata("sha1", 20),
 }
 
+HASH_PROFILES = PROFILES
 
-FACTORIES = {
-        "sha256": hashlib.sha256, "sha512": hashlib.sha512,
-        "sha3-256": hashlib.sha3_256,
-        "blake2b-256": lambda: hashlib.blake2b(digest_size=32),
-        "blake2s-256": lambda: hashlib.blake2s(digest_size=32),
-        # False declares a non-security educational use; never change host policies.
-        "md5": lambda: hashlib.md5(usedforsecurity=False),
-        "sha1": lambda: hashlib.sha1(usedforsecurity=False),
-}
+def get_hash_constructor(profile_id: str) -> Callable[..., Any]:
+    if profile_id == "sha256":
+        return lambda d=b"": hashlib.sha256(d)
+    elif profile_id == "sha512":
+        return lambda d=b"": hashlib.sha512(d)
+    elif profile_id == "sha3-256":
+        return lambda d=b"": hashlib.sha3_256(d)
+    elif profile_id == "blake2b-256":
+        return lambda d=b"": hashlib.blake2b(d, digest_size=32)
+    elif profile_id == "blake2s-256":
+        return lambda d=b"": hashlib.blake2s(d, digest_size=32)
+    elif profile_id == "md5":
+        return lambda d=b"": hashlib.md5(d, usedforsecurity=False)
+    elif profile_id == "sha1":
+        return lambda d=b"": hashlib.sha1(d, usedforsecurity=False)
+    else:
+        raise ValueError(f"Unknown hash profile: {profile_id}")
 
+def make_hasher(profile_id: str) -> Any:
+    constructor = get_hash_constructor(profile_id)
+    return constructor()
 
-def make_hasher(algorithm: str):
-    """Новий об'єкт для кожного повідомлення; без ключа і без солі."""
-    if algorithm not in FACTORIES:
-        raise ValueError("unknown hash profile")
-    return FACTORIES[algorithm]()
-
-
-def probe_profiles() -> list[dict]:
-    """Не приховує помилку основного профілю під статусом legacy unavailable."""
-    statuses = []
-    for algorithm, profile in PROFILES.items():
+def probe_profiles() -> List[Dict[str, Any]]:
+    results = []
+    # Перевіряємо обов'язкові сучасні алгоритми
+    required_algos = {"sha256", "sha512", "sha3-256", "blake2b-256", "blake2s-256"}
+    for p in PROFILES:
         try:
-            hasher = make_hasher(algorithm)
-        except ValueError:
-            if not profile.legacy:
-                raise RuntimeError("required hash profile unavailable") from None
-            statuses.append(dict(algorithm=algorithm, available=False,
-                                 reason="not_available_in_environment",
-                                 implementation=None))
-        else:
-            kind = type(hasher)
-            statuses.append(dict(algorithm=algorithm, available=True, reason=None,
-                                 implementation=f"{kind.__module__}.{kind.__name__}"))
-    return statuses
-
-
-def repeat_count(payload_bytes: int) -> int:
-    if type(payload_bytes) is not int or payload_bytes not in PAYLOAD_SIZES:
-        raise ValueError("unsupported payload size")
-    return 100 if payload_bytes == 1048576 else 1000
-
+            make_hasher(p)
+            results.append({
+                "algorithm": p,
+                "available": True,
+                "implementation": str(get_hash_constructor(p)().__class__),
+                "reason": None
+            })
+        except Exception as e:
+            if p in required_algos:
+                raise RuntimeError(f"Required profile {p} unavailable: {e}")
+            results.append({
+                "algorithm": p,
+                "available": False,
+                "implementation": None,
+                "reason": "not_available_in_environment"
+            })
+    return results
 
 def synthetic_payload(size: int) -> bytes:
-    """Публічні синтетичні байти, не генератор ключів або справжня відомість."""
-    if type(size) is not int or size < 0:
-        raise ValueError("invalid synthetic size")
-    pattern = b"Digital Dean synthetic export v1\n"
-    return (pattern * ((size + len(pattern) - 1) // len(pattern)))[:size]
+    base = b"synthetic export"
+    repeats = (size // len(base)) + 1
+    return (base * repeats)[:size]
