@@ -10,3 +10,4 @@ htmlcov/
 .env
 *.pem
 *.key
+var/*.sqlite3
