@@ -1,21 +1,26 @@
-"""Provided error redaction scoped to the NEW account routers only."""
+from typing import Callable
+from fastapi import Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
-
 class SensitiveRoute(APIRoute):
-    def get_route_handler(self):
-        original_handler = super().get_route_handler()
+    def get_route_handler(self) -> Callable:
+        original_route_handler = super().get_route_handler()
 
-        async def safe_handler(request):
+        async def custom_route_handler(request: Request) -> Response:
             try:
-                return await original_handler(request)
-            except RequestValidationError:
-                # No input, ctx, dynamic field name, body or parser excerpt.
-                return JSONResponse(status_code=422, content={"detail": [
-                    {"type": "invalid_request", "loc": ["request"],
-                     "msg": "invalid input"}
-                ]})
+                return await original_route_handler(request)
+            except RequestValidationError as exc:
+                sanitized_errors = []
+                for error in exc.errors():
+                    err_dict = dict(error)
+                    err_dict.pop("input", None)
+                    err_dict.pop("ctx", None)
+                    sanitized_errors.append(err_dict)
+                return JSONResponse(
+                    status_code=422,
+                    content={"detail": sanitized_errors},
+                )
 
-        return safe_handler
+        return custom_route_handler

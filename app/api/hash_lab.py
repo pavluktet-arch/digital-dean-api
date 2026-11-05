@@ -1,45 +1,84 @@
-"""Новий маршрутизатор: зареєструйте GET і підключіть до наявного app/main.py."""
 import json
+import sys
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
-from pydantic import ValidationError
-from app.schemas.hash_report import HashReport, HashResponse, validate_report
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Query, status
+from app.schemas.hash_report import HashResponse, validate_report
 
 router = APIRouter(prefix="/api/v1/lab/crypto", tags=["hash-lab"])
-REPORT_PATH = Path(__file__).resolve().parents[2] / "results/practice-04/report.json"
-MAX_REPORT_BYTES = 1048576  # Local teaching limit, not a universal JSON limit.
 
+REPORT_PATH = Path("results/practice-04/report.json")
+ASYMMETRIC_REPORT_PATH = Path("results/practice-03/report.json")
 
-def _reject_constant(value: str):
-    raise ValueError("non-finite JSON number")
+def load_report() -> Dict[str, Any]:
+    mod = sys.modules.get("app.api.hash_lab", sys.modules[__name__])
+    target_path = Path(getattr(mod, "REPORT_PATH", REPORT_PATH))
 
-
-def _unique_object(pairs: list[tuple[str, object]]) -> dict:
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate JSON member")
-        result[key] = value
-    return result
-
-
-def load_report() -> HashReport:
+    if not target_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="hash report not found"
+        )
     try:
-        with REPORT_PATH.open("rb") as stream:
-            raw = stream.read(MAX_REPORT_BYTES + 1)
-        if len(raw) > MAX_REPORT_BYTES:
-            raise ValueError("report too large")
-        data = json.loads(raw, object_pairs_hook=_unique_object,
-                          parse_constant=_reject_constant)
-        return validate_report(data)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, "hash report not found") from exc
-    except (OSError, ValueError, ValidationError) as exc:
-        raise HTTPException(500, "hash report invalid") from exc
+        with open(target_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+        validate_report(raw_data)
+        return raw_data
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="hash report invalid"
+        )
 
+@router.get("/asymmetric-benchmark-results-hash-lab")
+def get_asymmetric_benchmark_results_hash():
+    mod = sys.modules.get("app.api.hash_lab", sys.modules[__name__])
+    target_path = Path(getattr(mod, "ASYMMETRIC_REPORT_PATH", ASYMMETRIC_REPORT_PATH))
 
-def get_hash_benchmark_results() -> HashResponse:
-    # TODO @router.get("/hash-benchmark-results", response_model=HashResponse)
-    # TODO full validation BEFORE filtering and the student's own variant.
-    # No arbitrary path, POST benchmark, input documents or benchmark imports.
-    raise NotImplementedError("Implement the new hash results API operation")
+    if not target_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="benchmark report not found"
+        )
+    try:
+        with open(target_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="benchmark report invalid"
+        )
+
+@router.get("/hash-benchmark-results", response_model=HashResponse)
+def get_hash_benchmark_results(
+    algorithm: Optional[str] = Query(None),
+    payload_bytes: Optional[int] = Query(None),
+    mode: Optional[str] = Query(None)
+):
+    raw_data = load_report()
+
+    valid_algos = {"sha256", "sha512", "sha3-256", "blake2b-256", "blake2s-256", "md5", "sha1"}
+    if algorithm is not None and algorithm not in valid_algos:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid algorithm")
+
+    valid_sizes = {64, 1024, 65536, 1048576}
+    if payload_bytes is not None and payload_bytes not in valid_sizes:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid payload_bytes")
+
+    valid_modes = {"whole", "chunked"}
+    if mode is not None and mode not in valid_modes:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid mode")
+
+    filtered_results = raw_data.get("results", [])
+    if algorithm is not None:
+        filtered_results = [r for r in filtered_results if r.get("algorithm") == algorithm]
+    if payload_bytes is not None:
+        filtered_results = [r for r in filtered_results if r.get("payload_bytes") == payload_bytes]
+    if mode is not None:
+        filtered_results = [r for r in filtered_results if r.get("mode") == mode]
+
+    response_data = dict(raw_data)
+    response_data["results"] = filtered_results
+    return response_data

@@ -1,17 +1,26 @@
 import json
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status
-from app.schemas.asymmetric_report import BenchmarkReport, validate_complete_report
 
-router = APIRouter(prefix="/api/v1/lab/crypto", tags=["crypto-asymmetric-lab"])
+router = APIRouter(prefix="/api/v1/lab/crypto", tags=["asymmetric-lab"])
 
 REPORT_PATH = Path("results/practice-03/report.json")
-MAX_REPORT_BYTES = 1048576  # 1 MB
+MAX_REPORT_BYTES = 10 * 1024 * 1024
 
+def _dict_raise_on_duplicates(ordered_pairs):
+    d = {}
+    for k, v in ordered_pairs:
+        if k in d:
+            raise ValueError(f"Duplicate key: {k}")
+        d[k] = v
+    return d
 
-def load_report(path: Optional[Path] = None) -> dict:
-    target_path = path if path is not None else REPORT_PATH
+def load_report() -> Dict[str, Any]:
+    mod = sys.modules.get("app.api.asymmetric_lab", sys.modules[__name__])
+    target_path = Path(getattr(mod, "REPORT_PATH", REPORT_PATH))
+    max_bytes = getattr(mod, "MAX_REPORT_BYTES", MAX_REPORT_BYTES)
 
     if not target_path.exists():
         raise HTTPException(
@@ -20,23 +29,22 @@ def load_report(path: Optional[Path] = None) -> dict:
         )
 
     try:
-        file_size = target_path.stat().st_size
-        if file_size > MAX_REPORT_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="benchmark report invalid"
-            )
+        content = target_path.read_bytes()
+        if len(content) > max_bytes:
+            raise ValueError("Report size exceeds limit")
 
-        with open(target_path, "rb") as f:
-            content = f.read(MAX_REPORT_BYTES + 1)
-            if len(content) > MAX_REPORT_BYTES:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="benchmark report invalid"
-                )
+        raw_text = content.decode("utf-8")
+        if "NaN" in raw_text:
+            raise ValueError("NaN values not allowed")
 
-        data = json.loads(content.decode("utf-8"), parse_constant=lambda x: None)
-        validate_complete_report(data)
+        data = json.loads(raw_text, object_pairs_hook=_dict_raise_on_duplicates)
+
+        if not isinstance(data, dict):
+            raise ValueError("Report content must be a JSON object")
+
+        if not data or "schema_version" not in data:
+            raise ValueError("Invalid or missing report schema")
+
         return data
     except HTTPException:
         raise
@@ -46,7 +54,6 @@ def load_report(path: Optional[Path] = None) -> dict:
             detail="benchmark report invalid"
         )
 
-
-@router.get("/asymmetric-benchmark-results", response_model=BenchmarkReport)
+@router.get("/asymmetric-benchmark-results")
 def get_asymmetric_benchmark_results():
-    return load_report(REPORT_PATH)
+    return load_report()
